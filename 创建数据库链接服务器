@@ -1,0 +1,13 @@
+EXEC sp_addlinkedserver
+@server='OAtest',	--链接服务器别名
+@srvproduct='',
+@provider='SQLOLEDB',
+@datasrc='10.100.181.142'
+GO
+EXEC sp_addlinkedsrvlogin
+'OAtest',                  --链接服务器别名
+'false', 
+ NULL,
+'sa',                     --要访问的数据库的用户              
+'huayu`123'                    --要访问的数据库，用户的密码
+GO
