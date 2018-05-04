@@ -1,0 +1,200 @@
+USE [UFDATA_001_2016]
+GO
+/****** Object:  StoredProcedure [dbo].[KD_SP_HrTmSign]    Script Date: 05/03/2018 16:22:58 ******/
+SET ANSI_NULLS ON
+GO
+SET QUOTED_IDENTIFIER ON
+GO
+--exec KD_SP_HrTmSign
+ALTER proc [dbo].[KD_SP_HrTmSign]
+as
+    --'demo' cAuditor,GETDATE() dAuditTime,'demo' cAuditorNum,1 bAuditFlag
+    --bTakeTM=1 是考勤人员 vTerminateReason
+    --select cVoucherId,cDepCode,dEndDate,vLeaveReason,bLastFlag,vStatus1,cAuditorNum,cCreatorNum,cCreator,cExamineApproveType,irowno,vLeaveUnit,cSysBarCode,cDepName,vTerminateReason,cDutyClass,dChangeTime from hr_tm_Leave where cVoucherId='QJ2017042100008'
+	--请假单SourceID: vStatus1   select * from hr_tm_LeaveType --请假类型(过滤掉OA的请假类型为其他[12]和带薪病假[-12])
+begin tran
+declare @cDepName nvarchar(20)
+declare @cPsn_Nums nvarchar(20)
+declare @cDepCode nvarchar(20)
+declare @vStatus1 nvarchar(20)
+declare @cLeaveType nvarchar(20)
+declare @dBeginDate nvarchar(25)
+declare @dEndDate nvarchar(25)
+declare @vRestPeriod nvarchar(20)
+declare @uuid uniqueidentifier
+DECLARE vouch CURSOR
+	READ_ONLY
+	FOR  select uuid,cDepName,cPsn_Nums,cDepCode,vStatus1,cLeaveType,dBeginDate,dEndDate,vRestPeriod
+		from ( 
+				select a.uuid,d.cDepName cDepName,OAPerson cPsn_Nums,p.cDept_num cDepCode,SourceID vStatus1,case OAType when '1' then 'BS00' when '2' then 'BS01' when '-13' then 'BS02' when '-6' then 'BS04' when '8' then 'BS05' when '7' then 'BS06' when '5' then 'BS07' when '10' then 'BS08' when '9' then 'BS10' when '16' then 'BS11' when '11' then 'BS12' when '13' then 'BU02' when '14' then 'BU03' when '15' then 'BU04' else ' ' end cLeaveType,
+				CONVERT(nvarchar(19),StartDate,23)+' '+StartTime dBeginDate,CONVERT(nvarchar(19),EndDate,23)+' '+EndTime dEndDate,
+				YEAR(StartDate) vRestPeriod from KD_T_OAKQ a 
+				inner join hr_hi_person p on p.cPsn_Num=a.OAPerson
+				inner join Department d on d.cDepCode=p.cDept_num
+				where DocumentType='请假单' and UploadFlag=0 and p.bTakeTM=1
+	       ) a
+	           	      
+	OPEN vouch
+	FETCH NEXT FROM vouch INTO @uuid,@cDepName,@cPsn_Nums,@cDepCode,@vStatus1,@cLeaveType,@dBeginDate,@dEndDate,@vRestPeriod
+	WHILE (@@fetch_status =0)
+	BEGIN
+	    declare @cVoucherCode varchar(10)--单据号后部分
+		declare @cVoucherNum int--单据最大序号
+		declare @cVoucherTime varchar(10)--单据的时间部分
+		select @cVoucherTime=CONVERT(varchar(100), GETDATE(), 112)
+		
+		select @cVoucherNum=cNumber From VoucherHistory with (NOLOCK) Where  CardNumber='TM01' and cContent is NULL
+		set @cVoucherCode=right((10000000000 + @cVoucherNum + 1),5)
+		update VoucherHistory set cNumber =cNumber+1  where CardNumber ='TM01'
+		select 'QJ'+@cVoucherTime+@cVoucherCode
+		--请假单信息表
+		insert into hr_tm_Leave(dChangeTime,cDutyClass,vTerminateReason,cDepName,cSysBarCode,vLeaveUnit,irowno,cExamineApproveType,vLeaveReason,cVoucherId,cPsn_Num,cDepCode,vStatus1,cLeaveType,dBeginDate,dEndDate,pk_hr_tm_Leave,vRestPeriod,bAuditFlag,dCreatTime,JobNumber,rLeaveTimeType,rLeaveStatus,dPlanEndDate,cAuditor,dAuditTime)
+	    values(CONVERT(varchar(100), GETDATE(), 121),'','',@cDepName,'IITM110|QJ'+@cVoucherTime+@cVoucherCode,2,1,2,'','QJ'+@cVoucherTime+@cVoucherCode,@cPsn_Nums,@cDepCode,@vStatus1,@cLeaveType,@dBeginDate,@dEndDate,NEWID(),@vRestPeriod,1,CONVERT(nvarchar(19),GETDATE(),20),@cPsn_Nums,2,0,@dEndDate,'demo',CONVERT(nvarchar(19),GETDATE(),20))
+	   
+	    --请假单表头
+		INSERT INTO [hr_tm_LeaveMain]
+           (pk_hr_tm_LeaveMain,cVoucherId,rLeaveTimeType,cLeaveType,cDepCode,cDepName,dBeginDate,dEndDate,cCreateBy,dCreateOn,cModifyBy,cSubmitBy,cAuditBy,dAuditOn,cCurrentAuditor,cVoucherCode,vLeaveReason,cSysBarCode,cExamineApproveType,cStatus,cCode)
+          values(Newid(),'QJ'+@cVoucherTime+@cVoucherCode,2,@cLeaveType,@cDepCode,@cDepName,@dBeginDate,@dEndDate,'demo',CONVERT(varchar(100), GETDATE(), 121),'','','demo',CONVERT(varchar(100), GETDATE(), 121),'','QJ'+@cVoucherTime+@cVoucherCode,'','IITM110|QJ'+@cVoucherTime+@cVoucherCode,2,2,'TM110')
+	    update KD_T_OAKQ set UploadFlag=1,UploadTime=GETDATE() where DocumentType='请假单' and UploadFlag=0 and Uuid=@uuid
+		
+		FETCH NEXT FROM vouch INTO @uuid,@cDepName,@cPsn_Nums,@cDepCode,@vStatus1,@cLeaveType,@dBeginDate,@dEndDate,@vRestPeriod
+	END	
+	CLOSE vouch
+	DEALLOCATE vouch
+	commit tran
+
+	--加班单 cTimeUseless2 
+    begin tran
+	declare @cPsn_Num varchar(50)
+	declare @cTimeUseless2 varchar(50)
+	declare @nManMinute decimal(9,2)
+	declare @dJbDate nchar(10)
+	declare @dBeginTime nchar(8)
+	declare @dEndTime nchar(8)
+	declare @dCreatTime nvarchar(19)
+	declare @DateNo varchar(50)
+	declare @vJbCode nvarchar(19)
+	DECLARE cur CURSOR
+	READ_ONLY
+	FOR  select OAPerson,SourceID,ManMinute,StartDate,StartTime,EndTime,CONVERT(nvarchar(19), GETDATE(), 20),DateNo,OAType
+		from ( 
+				select OAPerson,SourceID,DATEDIFF ( MINUTE ,startdate+StartTime ,enddate+EndTime ) ManMinute,CONVERT(nchar(10),StartDate,20) StartDate,StartTime,EndTime,CONVERT(varchar(12) , startdate, 112 ) DateNo,OAType
+				from KD_T_OAKQ a inner join hr_hi_person b on a.OAPerson=b.cPsn_Num
+				where DocumentType='加班单' and UploadFlag=0 and b.bTakeTM=1
+	       ) a where not exists (select cTimeUseless2 from hr_tm_overtimeresult where cTimeUseless2=a.SourceID)
+	           	      
+	OPEN cur
+	FETCH NEXT FROM cur INTO @cPsn_Num,@cTimeUseless2,@nManMinute,@dJbDate,@dBeginTime,@dEndTime,@dCreatTime,@DateNo,@vJbCode
+	WHILE (@@fetch_status =0)
+	BEGIN
+	    declare @everyMinute decimal(9,2)--每小时60分     加班计算方式iComputeType=5
+	    declare @cNumber int
+		declare @MaxiRecordId int  
+	    declare @iRecordId int  --记录号
+	    declare @cDept_num nvarchar(30) --部门编码
+		declare @vouchNo varchar(10)--加班单单据编码 VoucherID
+		declare @rDealType varchar(10)--加班单处理方式
+		select @cNumber=cNumber From VoucherHistory  with (NOLOCK) Where  CardNumber='TM03' and cContent is NULL
+		set @vouchNo=right((10000000000 + @cNumber + 1),5)
+		update VoucherHistory set cNumber =cNumber+1  where CardNumber ='TM03'
+		set @everyMinute=60
+		select @cDept_num=cDept_num from hr_hi_person where cPsn_Num=@cPsn_Num --部门编码
+		select @MaxiRecordId=MAX(iRecordId) from hr_tm_overtimevoucher
+		if(isnull(@MaxiRecordId,0)=0)
+		begin
+		  set @iRecordId=1
+		end
+		else
+		begin
+		  set @iRecordId=@MaxiRecordId
+		end
+		update hr_tm_overtimevoucher set iRecordId=iRecordId+1 where iRecordId=@iRecordId
+		update hr_tm_overtimeresult set iRecordId=iRecordId+1 where iRecordId=@iRecordId
+		
+		if(@vJbCode='CS01' or @vJbCode='CS02' or @vJbCode='CS03')
+		begin
+		  set @rDealType='2'
+		end
+		else if(@vJbCode='CU04' or @vJbCode='CU05' or @vJbCode='CU06')
+		begin
+		  set @rDealType='1'
+		end
+		--加班单单据  --20170802更新单据rFreeCardMode为1 
+    insert into hr_tm_overtimevoucher(rDealType,cExamineApproveType,cStatus,VoucherID,cDept_num,vJbCode,iComputeType,dJbDate,nManHours,cTimeUseless2,dDutyTime,dOffTime,bOverDate,bOverDate2,dBeginTime,dEndTime,iBeginCardAhead,iEndCardForward,rFreeCardMode,nMaxDelay,nMaxLeave,iRecordId,cCreator,cCreatorNum,dAuditTime,dCreatTime,cAuditor,cAuditorNum,bAuditFlag)
+       values(@rDealType,2,'2','JB'+@DateNo+@vouchNo,null,@vJbCode,5,@dJbDate,cast(@nManMinute/@everyMinute as numeric(10,1)),@cTimeUseless2,@dBeginTime,@dEndTime,0,0,'00:00','23:59',0,0,1,null,null,@iRecordId,'demo','demo',CONVERT(nchar(19),GETDATE(),120),CONVERT(nchar(19),GETDATE(),120),'demo','demo',1)
+        --加班单明细 --20170802更新单据rFreeCardMode为1 
+	insert into hr_tm_overtimeresult(cStatus,rDealType,cExamineApproveType,uRecordId,uOverTimeCode,cPsn_Num,vCardTime,nManHours,dJbDate,vJbCode,dBeginTime,dEndTime,
+                     dDutyTime,dOffTime, bOverDate, bOverDate2, bPeriod, bCompute, iComputeType,
+                     dOVStartCard, dOVEndCard, iRecordId,bAuditFlag, cCreatorNum,cCreator,dCreatTime,rFreeCardMode,
+                     JobNumber,VoucherID,cTimeUseless2,cAuditor,dAuditTime,cAuditorNum)
+	    values('2',@rDealType,2,NEWID(),NEWID(),@cPsn_Num,null,cast(@nManMinute/@everyMinute as numeric(10,1)),@dJbDate,@vJbCode,'00:00','23:59',@dBeginTime,@dEndTime,0,0,0,0,5,'','',@iRecordId,1,'demo','demo',@dCreatTime,1,@cPsn_Num,'JB'+@DateNo+@vouchNo,null,'demo' ,CONVERT(nchar(19),GETDATE(),120),'demo')
+        ---20170802 更新外地出差为免卡
+        
+        update j
+set iComputeType=1
+from 
+hr_tm_overtimeresult j inner join hr_tm_Errand w on j.cPsn_Num=w.cPsn_Num 
+where convert (varchar(10),j.dJbDate,23)>=convert (varchar(10),w.dBeginDate,23)
+ and j.dJbDate<=dEndDate  and iComputeType!=1 and cErrandType='ds02'
+
+update js
+set js.iComputeType=1
+from 
+hr_tm_overtimeresult j inner join HR_TM_OverTimeVoucher js on j.VoucherID=js.VoucherID
+where j.iComputeType!=js.iComputeType
+--就上面这部分
+        update KD_T_OAKQ set UploadFlag=1,UploadTime=GETDATE(),UfcCode='JB'+@DateNo+@vouchNo  where SourceID=@cTimeUseless2  and DocumentType='加班单' and UploadFlag=0
+		FETCH NEXT FROM cur INTO @cPsn_Num,@cTimeUseless2,@nManMinute,@dJbDate,@dBeginTime,@dEndTime,@dCreatTime,@DateNo,@vJbCode
+	END
+			
+	CLOSE cur
+	DEALLOCATE cur
+	commit tran
+
+	--补单(补打卡管理 签卡记录,OAType：0是上午未打卡,1是下午为打卡，2是全天未打卡) 
+    insert into hr_tm_SignCardData(uRecordId, cPsn_Num, vCardNo, dDateTime, bDuty, bOverTime, bManual, iPeriodId, iFlag, cOptPsn_Num, dSysTime, vRemark, vReason, dOldDateTime, iRecordId, bLastFlag, vStatus1, nStatus2, bEffect, bAuditFlag, cAuditorNum, dAuditTime, JobNumber, nMachine_Num)
+	select NEWID(),OAPerson,vcardNo,dDateTime, null,null,1,SourceID,0,UploadPerson,GETDATE(),'',vReasonType,null,null,1,null,null,1,1,'demo',CONVERT(nvarchar(19),GETDATE(),20),null,null
+    from (
+			select OAPerson,b.vCardNo vcardNo,case when StartTime is null or StartTime='' then StartDate+' '+'09:30:00.000' else CONVERT(nvarchar(10),StartDate,23)+' '+StartTime end dDateTime,StartTime,EndTime,SourceID,'demo' UploadPerson,'00' vReasonType,OAType from KD_T_OAKQ a 
+			inner join hr_hi_person b on a.OAPerson=b.cPsn_Num
+			where DocumentType='补单(补打卡管理)' and UploadFlag=0 and OAType='0' and b.bTakeTM=1
+			union all
+			select OAPerson,b.vCardNo vcardNo,case when StartTime is null or StartTime='' then StartDate+' '+'16:00:00.000' else CONVERT(nvarchar(10),StartDate,23)+' '+StartTime end dDateTime,StartTime,EndTime,SourceID,'demo' UploadPerson,'00' vReasonType,OAType from KD_T_OAKQ a 
+			inner join hr_hi_person b on a.OAPerson=b.cPsn_Num
+			where DocumentType='补单(补打卡管理)' and UploadFlag=0 and OAType='1' and b.bTakeTM=1
+			union all
+			select OAPerson,b.vCardNo vcardNo,StartDate+' '+'09:30:00.000' dDateTime,StartTime,EndTime,SourceID,'demo' UploadPerson,'00' vReasonType,OAType from KD_T_OAKQ a 
+			inner join hr_hi_person b on a.OAPerson=b.cPsn_Num
+			where DocumentType='补单(补打卡管理)' and UploadFlag=0 and OAType='2' and b.bTakeTM=1
+			union all
+			select OAPerson,b.vCardNo vcardNo,StartDate+' '+'16:00:00.000' dDateTime,StartTime,EndTime,SourceID,'demo' UploadPerson,'00' vReasonType,OAType from KD_T_OAKQ a 
+			inner join hr_hi_person b on a.OAPerson=b.cPsn_Num
+			where DocumentType='补单(补打卡管理)' and UploadFlag=0 and OAType='2' and b.bTakeTM=1
+		) a
+    update KD_T_OAKQ set UploadFlag=1,UploadTime=GETDATE() where DocumentType='补单(补打卡管理)' and UploadFlag=0
+
+   --考勤记录(刷卡记录)
+    INSERT INTO [hr_tm_OriCardData]
+          ([uRecordId],[cPsn_Num],[vCardNo],dAuditTime,[cAuditorNum],[dDateTime],[bManual],[iFlag]
+          ,[dSysTime],[bEffect],[iPeriodId],[bAuditFlag],[nMachine_Num])
+     select NEWID(),OAPerson,vcardNo,CONVERT(nvarchar(19),GETDATE(),20),cAuditorNum,dDateTime,bManual,iFlag,dSysTime,bEffect,SourceID,bAuditFlag,nMachine_Num
+	from ( 
+	     select b.cPsn_Num OAPerson,OACode vcardNo,'demo' cAuditorNum,convert(char(10),StartDate,120)+' '+Datename(hour,StartDate)+':'+ Datename(minute,StartDate)+':00.000' dDateTime,0 bManual,0 iFlag,convert(char(10),GetDate(),120)+' '+Datename(hour,GetDate())+':'+ Datename(minute,GetDate())+':'+'00.000' dSysTime,1 bEffect,SourceID,1 bAuditFlag,'' nMachine_Num from KD_T_OAKQ a
+	     inner join hr_hi_person b on a.OACode=b.vCardNo
+	     where DocumentType='考勤记录' and UploadFlag=0 and b.bTakeTM=1 and b.dLeaveDate is null
+	     ) a
+	update a set UploadFlag=1,UploadTime=GETDATE() from KD_T_OAKQ a
+	inner join hr_hi_person b on a.OACode=b.vCardNo
+	where DocumentType='考勤记录' and UploadFlag=0 and b.vCardNo is not null
+
+
+	--出差单 (外地出差)
+	--外出单（市内公出）
+	insert into hr_tm_errand(cPsn_Num, cDepCode, cErrandType, nErrandDates, vReason, dBeginDate, dEndDate, vApprover, vRemark, bLastFlag, vStatus1, nStatus2, pk_hr_tm_Errand, iHourUsed, cAuditorNum, cAuditor, dAuditTime, bAuditFlag, cCreatorNum, cCreator, dCreatTime, cOperatorNum, cOperator, dOperatTime, JobNumber)
+	select OAPerson,null,cErrandType, null,null,dBeginDate,dEndDate,null,null,null,null,null,NEWID(),null,'demo','demo',CONVERT(nchar(19),GETDATE(),120),1,'demo','demo',CONVERT(nvarchar(19),GETDATE(),20),null,null,null,OAPerson
+	from ( 
+	       select SourceID,OAPerson,case when DocumentType='外出单（市内公出）' then 'DS01' else 'DS02' end cErrandType,CONVERT(nvarchar(100),StartDate,23)+' '+StartTime dBeginDate,CONVERT(nvarchar(100),EndDate,23)+' '+EndTime dEndDate,UploadPerson from KD_T_OAKQ a
+	       inner join hr_hi_person b on a.OAPerson=b.cPsn_Num
+	       where DocumentType in ('出差申请单','外出单（市内公出）') and UploadFlag=0 and b.bTakeTM=1
+	     ) a 
+	update KD_T_OAKQ set UploadFlag=1,UploadTime=GETDATE() where DocumentType in ('出差申请单','外出单（市内公出）') and UploadFlag=0

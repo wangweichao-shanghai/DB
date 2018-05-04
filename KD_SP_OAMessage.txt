@@ -1,0 +1,62 @@
+USE [UFDATA_001_2016]
+GO
+/****** Object:  StoredProcedure [dbo].[KD_SP_OAMessage]    Script Date: 04/20/2018 13:24:59 ******/
+SET ANSI_NULLS ON
+GO
+SET QUOTED_IDENTIFIER ON
+GO
+
+ALTER proc [dbo].[KD_SP_OAMessage]
+ as
+	insert into KD_T_OAKQ(Uuid, SourceID, DocumentType, OAPerson, OAType, StartDate, EndDate, StartTime, EndTime, Currentnodetype, OACode,DownloadTime,UploadFlag)
+	select NEWID (),SourceID ,'请假单',OAPerson,OAType, StartDate, EndDate, StartTime, EndTime, Currentnodetype, OACode,GETDATE (),0 from ( 
+	select  f.id SourceID, r.workcode   OAPerson,f.newleavetype OAType,fromdate StartDate,  todate EndDate, fromtime StartTime, totime EndTime, fl.currentnodetype,null OACode
+	from OASQL.ecology.dbo.formtable_main_14  f
+	inner join OASQL.ecology.dbo.workflow_requestbase fl on f.requestId=fl.requestId
+	inner join OASQL.ecology.dbo.HrmResource r on f.resourceId=r.id   
+	where fl. currentnodetype='1'
+	) a where not exists (select SourceID from KD_T_OAKQ where SourceID=a.SourceID and DocumentType='请假单')
+
+	insert into KD_T_OAKQ(Uuid, SourceID, DocumentType, OAPerson, OAType, StartDate, EndDate, StartTime, EndTime, Currentnodetype, OACode,DownloadTime,UploadFlag)
+	select NEWID (),SourceID ,'加班单',OAPerson,OAType, StartDate, EndDate, StartTime, EndTime, Currentnodetype, OACode,GETDATE (),0 from ( 
+	select  f.id SourceID, r.workcode OAPerson,CASE WHEN jblx =0 and chfs=1 THEN 'CS01' WHEN jblx =1 and chfs=1 THEN 'CS02' WHEN jblx =2 and chfs=1 THEN 'CS03' WHEN jblx =0 and chfs=0 THEN 'CU04' WHEN jblx =1 and chfs=0 THEN 'CU05' ELSE 'CU06' END OAType,sjjbksrq StartDate,sjjbjsrq EndDate, sjjbkssj StartTime, sjjbjssj EndTime, fl.currentnodetype,null OACode
+	from OASQL.ecology.dbo.formtable_main_15 f
+	inner join OASQL.ecology.dbo.workflow_requestbase fl on f.requestId=fl.requestId
+	inner join OASQL.ecology.dbo.HrmResource r on f.jbrxm =r.id
+	where fl. currentnodetype='3' and f.jblx is not null and sjjbkssj!=sjjbjssj
+	) a where not exists (select SourceID from KD_T_OAKQ where SourceID=a.SourceID and DocumentType='加班单')
+
+	insert into KD_T_OAKQ(Uuid, SourceID, DocumentType, OAPerson, OAType, StartDate, EndDate, StartTime, EndTime, Currentnodetype, OACode,DownloadTime,UploadFlag)
+	select NEWID (),SourceID ,'出差申请单',OAPerson,OAType, StartDate, EndDate, StartTime, EndTime, Currentnodetype, OACode,GETDATE (),0 from ( 
+    select  f.id SourceID, r.workcode OAPerson,'外地出差' OAType,case when ksrq='' then '' else ksrq end StartDate,case when jsrq='' then '' else jsrq end EndDate,'00:00' StartTime, '23:59' EndTime, fl.currentnodetype,null OACode
+	from OASQL.ecology.dbo.formtable_main_25 f
+	inner join OASQL.ecology.dbo.workflow_requestbase fl on f.requestId=fl.requestId
+	inner join OASQL.ecology.dbo.HrmResource r on f.xm =r.id
+	where fl. currentnodetype='3' and ISNULL(ksrq,'')<>''
+	) a where not exists (select SourceID from KD_T_OAKQ where SourceID=a.SourceID and DocumentType='出差申请单')
+    --补单(补打卡管理) wdksj1(补单时间) bdksj(补单日期不可为空)
+    insert into KD_T_OAKQ(Uuid, SourceID, DocumentType, OAPerson, OAType, StartDate, EndDate, StartTime, EndTime, Currentnodetype, OACode,DownloadTime,UploadFlag)
+	select NEWID (),SourceID ,'补单(补打卡管理)',OAPerson,OAType, StartDate, EndDate, StartTime, EndTime, Currentnodetype, OACode,GETDATE (),0 from ( 
+	select  f.id SourceID, r.workcode OAPerson,wdksj OAType,bdksj StartDate,null EndDate, wdksj1 StartTime, '' EndTime, fl.currentnodetype,null OACode
+	from OASQL.ecology.dbo.formtable_main_94 f
+	inner join OASQL.ecology.dbo.workflow_requestbase fl on f.requestId=fl.requestId
+	inner join OASQL.ecology.dbo.HrmResource r on f.resourceid =r.id
+	where fl. currentnodetype='3' and f.bdksj<>''
+	) a where not exists (select SourceID from KD_T_OAKQ where SourceID=a.SourceID and DocumentType='补单(补打卡管理)')
+	
+	insert into KD_T_OAKQ(Uuid, SourceID, DocumentType, OAPerson, OAType, StartDate, EndDate, StartTime, EndTime, Currentnodetype, OACode,DownloadTime,UploadFlag)
+	select NEWID (),SourceID ,'外出单（市内公出）',OAPerson,OAType, StartDate, EndDate, StartTime, EndTime, Currentnodetype, OACode,GETDATE (),0 
+	from ( 
+		select  f.id SourceID, r.workcode OAPerson,'本地公出' OAType,ccksrq StartDate,ccjsrq EndDate, sj1 StartTime, sj2 EndTime, fl.currentnodetype,null OACode
+		from OASQL.ecology.dbo.formtable_main_93 f
+		inner join OASQL.ecology.dbo.workflow_requestbase fl on f.requestId=fl.requestId
+		inner join OASQL.ecology.dbo.HrmResource r on f.xm =r.id
+		where fl. currentnodetype='3'
+	) a where not exists (select SourceID from KD_T_OAKQ where SourceID=a.SourceID and DocumentType='外出单（市内公出）')
+	
+	insert into KD_T_OAKQ(Uuid, SourceID, DocumentType, OAPerson, OAType, StartDate, EndDate, StartTime, EndTime, Currentnodetype, OACode,DownloadTime,UploadFlag)
+	select NEWID (),SourceID ,'考勤记录',OAPerson,OAType, StartDate, EndDate, StartTime, EndTime, Currentnodetype, OACode,GETDATE (),0 from ( 
+	select  f.EventID SourceID, null OAPerson,null OAType,Eventtime StartDate,null EndDate, null StartTime, null EndTime, null currentnodetype,CASE WHEN LEN(cardNo)=6 THEN '00'+cardNo WHEN LEN(cardNo)=7 THEN '0'+cardNo ELSE cardNo END OACode
+	from HRSQL.AXData.dbo.Tevent f where controlid in ('38','39','34')
+	) a where not exists (select SourceID from KD_T_OAKQ where SourceID=a.SourceID and DocumentType='考勤记录')
+	
